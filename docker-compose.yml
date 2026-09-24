@@ -32,7 +32,7 @@ services:
     volumes:
       - ./output:/data/output
       - processor_cache:/data/cache
-      - ./config:/data/config:ro
+      - ./config:/data/config        # yt-dlp refreshes cookies.txt, so keep it writable
 
 volumes:
   n8n_data:

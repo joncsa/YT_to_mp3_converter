@@ -20,8 +20,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse
+import hmac
+from urllib.parse import parse_qs
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import media, naming, trim
@@ -144,7 +147,8 @@ def _trim_options(req: AnalyzeRequest) -> trim.TrimOptions:
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True, "quality": media.MP3_QUALITY, "output_dir": str(OUTPUT_DIR)}
+    return {"ok": True, "quality": media.MP3_QUALITY, "output_dir": str(OUTPUT_DIR),
+            "cookies": Path(media.COOKIES).is_file()}
 
 
 @app.post("/resolve", dependencies=secured)
@@ -302,3 +306,57 @@ def batch_zip(batch: str):
             zf.write(OUTPUT_DIR / f, arcname=f)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     return FileResponse(zip_path, media_type="application/zip", filename=f"mp3-batch-{stamp}.zip")
+
+
+# ------------------------------------------------------------------------------ cookies upload page
+# YouTube blocks datacenter IPs ("Sign in to confirm you're not a bot") unless yt-dlp sends cookies
+# from a signed-in browser. This page lets you paste a Netscape cookies.txt without shell access.
+
+COOKIE_PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>YouTube cookies</title><style>body{{font:15px system-ui;max-width:760px;margin:24px auto;padding:0 16px}}
+textarea{{width:100%;height:280px;font:12px monospace}}input{{width:100%;padding:6px}}button{{padding:8px 18px;margin-top:10px}}
+.s{{padding:10px;border-radius:6px;background:#eef}}</style></head><body>
+<h2>YouTube cookies for yt-dlp</h2><p class="s">{status}</p>
+<ol><li>Open a <b>private/incognito</b> window and sign in to YouTube (a spare Google account is safest).</li>
+<li>Export cookies for youtube.com with the <i>Get cookies.txt LOCALLY</i> extension (Netscape format), then <b>close</b> the private window
+so the cookies aren't rotated.</li><li>Paste the whole file below with your API key and save.</li></ol>
+<form method="post"><label>API key<input type="password" name="key" required></label>
+<label>cookies.txt<textarea name="cookies" required placeholder="# Netscape HTTP Cookie File"></textarea></label>
+<button type="submit">Save cookies</button></form></body></html>"""
+
+
+def _cookie_status() -> str:
+    path = Path(media.COOKIES)
+    if not path.is_file():
+        return "No cookies saved yet."
+    stamp = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    lines = sum(1 for ln in path.read_text(errors="ignore").splitlines() if ln and not ln.startswith("#"))
+    return f"Cookies saved ({lines} entries, updated {stamp})."
+
+
+@app.get("/admin/cookies", response_class=HTMLResponse)
+def cookies_page() -> str:
+    return COOKIE_PAGE.format(status=_cookie_status())
+
+
+@app.post("/admin/cookies", response_class=HTMLResponse)
+async def cookies_save(request: Request) -> str:
+    form = parse_qs((await request.body()).decode("utf-8", "ignore"))
+    key = (form.get("key") or [""])[0]
+    text = (form.get("cookies") or [""])[0].replace("\r\n", "\n").strip() + "\n"
+    if not API_KEY:
+        raise HTTPException(403, "Set the API_KEY variable on the service first.")
+    if not hmac.compare_digest(key, API_KEY):
+        raise HTTPException(401, "Wrong API key.")
+    rows = [ln.split("\t") for ln in text.splitlines() if ln.strip() and not ln.startswith("#")]
+    if not rows or any(len(r) < 7 for r in rows):
+        raise HTTPException(400, "That doesn't look like a Netscape cookies.txt (7 tab-separated columns per line).")
+    if not any("youtube.com" in r[0] for r in rows):
+        raise HTTPException(400, "No youtube.com cookies found in the file.")
+    path = Path(media.COOKIES)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not text.startswith("# Netscape HTTP Cookie File"):
+        text = "# Netscape HTTP Cookie File\n" + text
+    path.write_text(text)
+    path.chmod(0o600)
+    return COOKIE_PAGE.format(status="Saved. " + _cookie_status())

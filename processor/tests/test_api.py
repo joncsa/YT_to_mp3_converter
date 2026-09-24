@@ -87,3 +87,19 @@ def test_export_rejects_bad_range(client):
     a = c.post("/analyze", json={"url": "https://youtu.be/vid123"}).json()
     r = c.post("/export", json={"id": a["id"], "artist": "A", "title": "B", "range": "later"})
     assert r.status_code == 400
+
+
+def test_cookie_upload(client, monkeypatch, tmp_path):
+    c, _ = client
+    from app import main, media
+
+    monkeypatch.setattr(main, "API_KEY", "k1")
+    monkeypatch.setattr(media, "COOKIES", str(tmp_path / "cfg" / "cookies.txt"))
+    assert "No cookies" in c.get("/admin/cookies").text
+    good = ".youtube.com\tTRUE\t/\tTRUE\t1999999999\tSID\tabc\n"
+    assert c.post("/admin/cookies", data={"key": "bad", "cookies": good}).status_code == 401
+    assert c.post("/admin/cookies", data={"key": "k1", "cookies": "hello"}).status_code == 400
+    r = c.post("/admin/cookies", data={"key": "k1", "cookies": good})
+    assert r.status_code == 200 and "1 entries" in r.text
+    assert (tmp_path / "cfg" / "cookies.txt").read_text().startswith("# Netscape")
+    assert c.get("/health").json()["cookies"] is True

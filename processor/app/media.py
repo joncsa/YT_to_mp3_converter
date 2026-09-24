@@ -22,7 +22,7 @@ from .parsing import ParsedLine
 log = logging.getLogger("processor.media")
 
 FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
-COOKIES = os.environ.get("YTDLP_COOKIES") or None
+COOKIES = os.environ.get("YTDLP_COOKIES") or "/data/config/cookies.txt"
 PLAYLIST_LIMIT = int(os.environ.get("PLAYLIST_LIMIT", "200"))
 PODCAST_MIN_SECONDS = 15 * 60
 # LAME presets. "V2" = VBR averaging ~190 kbps (the standard "192 VBR" preset); "ABR192" = average bitrate 192k.

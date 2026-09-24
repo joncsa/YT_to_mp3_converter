@@ -45,7 +45,8 @@ The processor has to run somewhere with ffmpeg, and your n8n instance has to be 
 * Set the processor's `PUBLIC_URL` env var to the address **your browser** can use. Preview and download links
   are built from it.
 * YouTube often blocks datacenter IPs ("Sign in to confirm you're not a bot"). If that happens, export a
-  `cookies.txt` from a logged-in browser and mount it at `/data/config/cookies.txt`.
+  `cookies.txt` from a logged-in browser (a private window with a spare Google account is safest; close the
+  window afterwards) and paste it at `https://<processor>/admin/cookies` together with your `API_KEY`.
 
 ## Using the form
 
