@@ -8,16 +8,16 @@ COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
 
 WORKDIR /srv
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Always pull the newest yt-dlp at build time (YouTube changes often) - redeploy to update it.
+RUN pip install --no-cache-dir -r requirements.txt \
+ && pip install --no-cache-dir -U "yt-dlp[default]"
 COPY app ./app
 
 ENV CACHE_DIR=/data/cache \
     OUTPUT_DIR=/data/output \
     PYTHONUNBUFFERED=1
-VOLUME ["/data"]
 # Listens on $PORT (Zeabur/Railway/Render set it, e.g. 8080); 8000 when unset (docker compose).
 EXPOSE 8080 8000
 HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/health' % os.environ.get('PORT','8000'))"
-# Update yt-dlp on every start: YouTube changes often and stale versions break downloads.
-CMD pip install --no-cache-dir -q -U "yt-dlp[default]" || true; \
-    exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}" --workers 1 --timeout-keep-alive 1900
+# Start the server immediately (no network work at boot, so the platform health check passes fast).
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --timeout-keep-alive 1900"]
