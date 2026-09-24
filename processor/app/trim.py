@@ -73,30 +73,40 @@ def _fmt(t: float) -> str:
 # Feature extraction
 # --------------------------------------------------------------------------------------------
 
-def block_features(samples: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarray]:
-    """Return (rms_db[n_blocks], log-band spectra[n_blocks, N_BANDS]) at BLOCK resolution."""
+def block_features(samples: np.ndarray, sr: int, chunk_blocks: int = 1024) -> tuple[np.ndarray, np.ndarray]:
+    """Return (rms_db[n_blocks], log-band spectra[n_blocks, N_BANDS]) at BLOCK resolution.
+
+    Processed in chunks so peak memory stays ~ a few MB above the audio itself, even for long files.
+    """
+    samples = np.asarray(samples, dtype=np.float32)
     hop = int(round(sr * BLOCK))
     n_fft = 1 << int(np.ceil(np.log2(hop)))
     n_blocks = max(1, int(np.ceil(len(samples) / hop)))
-    padded = np.zeros(n_blocks * hop + n_fft, dtype=np.float32)
-    padded[: len(samples)] = samples
-
-    idx = np.arange(n_fft)[None, :] + hop * np.arange(n_blocks)[:, None]
-    frames = padded[idx]
-
-    rms = np.sqrt(np.mean(padded[: n_blocks * hop].reshape(n_blocks, hop) ** 2, axis=1) + 1e-12)
-    rms_db = 20 * np.log10(rms + 1e-12)
-
-    spec = np.abs(np.fft.rfft(frames * np.hanning(n_fft)[None, :], axis=1)) ** 2
+    window = np.hanning(n_fft).astype(np.float32)
     freqs = np.fft.rfftfreq(n_fft, 1 / sr)
     edges = np.geomspace(60, min(11000, sr / 2 - 1), N_BANDS + 1)
-    band_idx = np.clip(np.digitize(freqs, edges) - 1, -1, N_BANDS)
-    bands = np.zeros((n_blocks, N_BANDS), dtype=np.float64)
+    band_idx = np.digitize(freqs, edges) - 1
+    # (n_bins, N_BANDS) 0/1 matrix: summing bins into bands becomes one matmul per chunk
+    band_matrix = np.zeros((len(freqs), N_BANDS), dtype=np.float32)
     for b in range(N_BANDS):
-        mask = band_idx == b
-        if mask.any():
-            bands[:, b] = spec[:, mask].sum(axis=1)
-    return rms_db, np.log(bands + 1e-9)
+        band_matrix[band_idx == b, b] = 1.0
+
+    rms_db = np.empty(n_blocks, dtype=np.float32)
+    bands = np.empty((n_blocks, N_BANDS), dtype=np.float32)
+    offsets = np.arange(n_fft)[None, :]
+    for c0 in range(0, n_blocks, chunk_blocks):
+        c1 = min(n_blocks, c0 + chunk_blocks)
+        start = c0 * hop
+        seg = samples[start : start + (c1 - c0) * hop + n_fft]
+        if len(seg) < (c1 - c0) * hop + n_fft:
+            seg = np.pad(seg, (0, (c1 - c0) * hop + n_fft - len(seg)))
+        blocks = seg[: (c1 - c0) * hop].reshape(c1 - c0, hop)
+        rms = np.sqrt(np.mean(blocks * blocks, axis=1) + 1e-12)
+        rms_db[c0:c1] = 20 * np.log10(rms + 1e-12)
+        frames = seg[offsets + hop * np.arange(c1 - c0)[:, None]] * window
+        spec = np.abs(np.fft.rfft(frames, axis=1)).astype(np.float32) ** 2
+        bands[c0:c1] = np.log(spec @ band_matrix + 1e-9)
+    return rms_db.astype(np.float64), bands.astype(np.float64)
 
 
 def _smooth(x: np.ndarray, width: int) -> np.ndarray:

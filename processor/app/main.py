@@ -40,6 +40,9 @@ CACHE_TTL_HOURS = float(os.environ.get("CACHE_TTL_HOURS", "48"))
 API_KEY = os.environ.get("API_KEY", "")
 META_DIR = OUTPUT_DIR / ".meta"
 _index_lock = threading.Lock()
+# Decode/analyse/encode are CPU+RAM heavy; run them one (or MAX_JOBS) at a time so a batch can't
+# exhaust a small server's memory. Downloads still run in parallel.
+_heavy = threading.BoundedSemaphore(max(1, int(os.environ.get("MAX_JOBS", "1"))))
 
 for d in (CACHE_DIR, OUTPUT_DIR, META_DIR / "batches"):
     d.mkdir(parents=True, exist_ok=True)
@@ -179,15 +182,17 @@ def analyze(req: AnalyzeRequest) -> dict:
         content_type = "music" if is_music or (info.get("duration") or 0) < media.PODCAST_MIN_SECONDS else "podcast"
 
     duration = float(info.get("duration") or 0)
-    sr = 22050 if duration and duration <= 30 * 60 else 8000
-    try:
-        samples = media.decode_mono(source, sr)
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "url": req.url, "input": req.input, "error": str(exc)}
-
+    # Lower analysis rate for long files keeps RAM small (3 h podcast @ 4 kHz ~ 170 MB).
+    sr = 22050 if duration <= 20 * 60 else 11025 if duration <= 60 * 60 else 4000
     opts = _trim_options(req)
     segments = media.sponsorblock_segments(info) if opts.mode == "smart" and content_type == "music" else []
-    result = trim.suggest_cuts(samples, sr, opts, segments, content_type)
+    with _heavy:
+        try:
+            samples = media.decode_mono(source, sr)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "url": req.url, "input": req.input, "error": str(exc)}
+        result = trim.suggest_cuts(samples, sr, opts, segments, content_type)
+        del samples
     result = trim.apply_override(result, req.start_override, req.end_override)
 
     if req.name_override and " - " in req.name_override:
@@ -248,8 +253,9 @@ def export(req: ExportRequest) -> dict:
     }
     cover = item_dir / "thumb.jpg"
     try:
-        media.encode_mp3(source, OUTPUT_DIR / filename, start, end, fade_in, fade_out, tags,
-                         cover if cover.exists() else None, req.quality)
+        with _heavy:
+            media.encode_mp3(source, OUTPUT_DIR / filename, start, end, fade_in, fade_out, tags,
+                             cover if cover.exists() else None, req.quality)
     except media.MediaError as exc:
         raise HTTPException(500, str(exc)) from exc
 
