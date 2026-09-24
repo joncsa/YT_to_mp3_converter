@@ -1,0 +1,39 @@
+# Bulk YouTube -> MP3 stack: n8n (UI + workflow) and the audio processor (yt-dlp + ffmpeg + trim detection).
+#   docker compose up -d --build
+#   n8n:        http://localhost:5678   (import n8n/yt-to-mp3-workflow.json)
+#   processor:  http://localhost:8000/health
+#   MP3s land in ./output on the host.
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - GENERIC_TIMEZONE=${TZ:-UTC}
+      - N8N_SECURE_COOKIE=false            # allow http://localhost login; remove when serving over HTTPS
+      - WEBHOOK_URL=${N8N_PUBLIC_URL:-http://localhost:5678/}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - audio-processor
+
+  audio-processor:
+    build: ./processor
+    restart: unless-stopped
+    ports:
+      - "8000:8000"                        # preview + download links open from your browser
+    environment:
+      - PUBLIC_URL=${PROCESSOR_PUBLIC_URL:-http://localhost:8000}
+      - MP3_QUALITY=${MP3_QUALITY:-V2}     # V2 = LAME VBR ~190 kbps ("192 VBR"); ABR192 / CBR192 / V0 also accepted
+      - CACHE_TTL_HOURS=48
+      - API_KEY=${PROCESSOR_API_KEY:-}     # optional; if set, add an X-API-Key header in the n8n HTTP nodes
+      - YTDLP_COOKIES=/data/config/cookies.txt  # optional: put a Netscape cookies.txt in ./config if YouTube asks you to sign in
+    volumes:
+      - ./output:/data/output
+      - processor_cache:/data/cache
+      - ./config:/data/config:ro
+
+volumes:
+  n8n_data:
+  processor_cache:
