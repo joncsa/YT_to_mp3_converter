@@ -15,8 +15,9 @@ ENV CACHE_DIR=/data/cache \
     OUTPUT_DIR=/data/output \
     PYTHONUNBUFFERED=1
 VOLUME ["/data"]
-EXPOSE 8000
-HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')"
+# Listens on $PORT (Zeabur/Railway/Render set it, e.g. 8080); 8000 when unset (docker compose).
+EXPOSE 8080 8000
+HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/health' % os.environ.get('PORT','8000'))"
 # Update yt-dlp on every start: YouTube changes often and stale versions break downloads.
 CMD pip install --no-cache-dir -q -U "yt-dlp[default]" || true; \
-    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --timeout-keep-alive 1900
+    exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}" --workers 1 --timeout-keep-alive 1900

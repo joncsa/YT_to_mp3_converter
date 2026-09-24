@@ -38,7 +38,8 @@ docker compose up -d --build
 The processor has to run somewhere with ffmpeg, and your n8n instance has to be able to reach it:
 
 * Deploy `processor/` (it has its own Dockerfile) next to n8n. On Zeabur, add a service from this repo with
-  root directory `processor`, give it a volume at `/data`, and expose port 8000.
+  root directory `processor`, give it a volume at `/data`, and generate a domain on the
+  port Zeabur assigns (the service listens on `$PORT`, e.g. 8080; set a `PORT` variable if Zeabur doesn't).
 * In the workflow's **Settings** node, set `processor_url` to the address n8n can use (for example the internal
   service hostname, or `https://your-processor.example.com`).
 * Set the processor's `PUBLIC_URL` env var to the address **your browser** can use. Preview and download links
