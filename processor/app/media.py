@@ -126,40 +126,72 @@ def safe_id(info: dict) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", raw)[:120]
 
 
-def download(url: str, cache_dir: Path) -> tuple[dict, Path, Path | None]:
-    """Download best audio + thumbnail. Returns (info, audio_path, thumb_path)."""
-    with yt_dlp.YoutubeDL(_ydl_opts()) as ydl:
-        info = ydl.extract_info(url, download=False)
-    if info.get("_type") == "playlist":
-        raise MediaError("expected a single video, got a playlist")
-    if info.get("is_live"):
-        raise MediaError("live streams are not supported")
-    item_dir = cache_dir / safe_id(info)
-    item_dir.mkdir(parents=True, exist_ok=True)
+# YouTube increasingly answers "HTTP Error 403" on the media URLs of some player clients unless a
+# PO token is supplied. Retry with other clients (several don't need one); optionally use a
+# bgutil PO-token provider service (POT_PROVIDER_URL, e.g. http://bgutil.zeabur.internal:4416).
+PLAYER_CLIENTS = [c.strip() for c in os.environ.get(
+    "YT_PLAYER_CLIENTS", "default,tv,web_safari,mweb,tv_simply,web_embedded").split(",") if c.strip()]
+POT_PROVIDER_URL = os.environ.get("POT_PROVIDER_URL", "").strip()
+RETRYABLE = ("403", "forbidden", "requested format is not available", "po token", "only images are available")
 
-    existing = [p for p in item_dir.glob("source.*") if not p.name.endswith(".part")]
-    if not existing:
+
+def _extractor_args(client: str) -> dict:
+    args: dict = {}
+    if client != "default":
+        args["youtube"] = {"player_client": [client]}
+    if POT_PROVIDER_URL:
+        args["youtubepot-bgutilhttp"] = {"base_url": [POT_PROVIDER_URL]}
+    return args
+
+
+def download(url: str, cache_dir: Path) -> tuple[dict, Path, Path | None]:
+    """Download best audio + thumbnail. Returns (info, audio_path, thumb_path); info['item_id'] names the cache dir."""
+    item_tmpl = str(cache_dir / "%(extractor_key)s-%(id)s")
+    errors: list[str] = []
+    info = None
+    for client in PLAYER_CLIENTS:
         opts = _ydl_opts(
             format="bestaudio/best",
-            outtmpl={"default": str(item_dir / "source.%(ext)s"), "thumbnail": str(item_dir / "thumb.%(ext)s")},
+            outtmpl={"default": item_tmpl + "/source.%(ext)s", "thumbnail": item_tmpl + "/thumb.%(ext)s"},
             writethumbnail=True,
             postprocessors=[{"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"}],
+            extractor_args=_extractor_args(client),
         )
         if FFMPEG != "ffmpeg":
             opts["ffmpeg_location"] = FFMPEG
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.process_ie_result(info, download=True)
-        existing = [p for p in item_dir.glob("source.*") if not p.name.endswith(".part")]
-    if not existing:
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+            break
+        except yt_dlp.utils.DownloadError as exc:
+            msg = str(exc)
+            errors.append(f"{client}: {msg}")
+            if not any(k in msg.lower() for k in RETRYABLE):
+                raise MediaError(msg) from exc
+            log.info("download %s with client %s failed, trying next: %s", url, client, msg)
+    if info is None:
+        raise MediaError("all YouTube clients were refused (HTTP 403). Last error: " + errors[-1].split(": ", 1)[-1]
+                         + " | Set up a PO-token provider (POT_PROVIDER_URL), see README.")
+    if info.get("_type") == "playlist":
+        raise MediaError("expected a single video, got a playlist")
+
+    downloads = info.get("requested_downloads") or []
+    source = Path(downloads[0]["filepath"]) if downloads and downloads[0].get("filepath") else None
+    if source is None or not source.exists():
+        found = sorted((cache_dir / f"{info.get('extractor_key')}-{info.get('id')}").glob("source.*"))
+        source = next((p for p in found if not p.name.endswith(".part")), None)
+    if source is None:
         raise MediaError("download produced no audio file")
+    item_dir = source.parent
 
     thumb = item_dir / "thumb.jpg"
     slim = {k: info.get(k) for k in (
         "id", "extractor_key", "title", "channel", "uploader", "artist", "artists", "creator", "track",
         "album", "release_year", "upload_date", "duration", "categories", "webpage_url", "series",
     )}
+    slim["item_id"] = item_dir.name
     (item_dir / "info.json").write_text(json.dumps(slim, ensure_ascii=False, indent=1))
-    return slim, existing[0], thumb if thumb.exists() else None
+    return slim, source, thumb if thumb.exists() else None
 
 
 def sponsorblock_segments(info: dict, categories=("music_offtopic",)) -> list[dict]:

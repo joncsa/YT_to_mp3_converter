@@ -42,6 +42,7 @@ def client(tmp_path, monkeypatch):
                             "-i", "-", str(src)], input=audio.tobytes(), check=True)
             subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=red:s=640x360",
                             "-frames:v", "1", str(item / "thumb.jpg")], check=True)
+        info["item_id"] = item.name
         (item / "info.json").write_text(json.dumps(info))
         return info, src, item / "thumb.jpg"
 

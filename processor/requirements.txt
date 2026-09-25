@@ -2,3 +2,4 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 numpy>=1.26
 yt-dlp[default]>=2025.11.12
+bgutil-ytdlp-pot-provider>=1.2  # yt-dlp plugin; only used when POT_PROVIDER_URL is set

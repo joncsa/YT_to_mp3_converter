@@ -118,8 +118,13 @@ the same video overwrites its file; a *different* video with the same name gets 
 | `GET /preview/{id}.mp3?at=…&part=head\|tail` | 15 s clip around a proposed cut |
 | `GET /files/{name}` · `GET /batches/{batch}.zip` | Downloads |
 
+**HTTP Error 403 on downloads**: YouTube wants a PO token for some player clients. The processor retries with
+other clients automatically (`YT_PLAYER_CLIENTS`). If that's not enough, run the PO-token provider image
+`brainicism/bgutil-ytdlp-pot-provider` (port 4416) next to the processor and set
+`POT_PROVIDER_URL=http://<its-host>:4416`.
+
 Environment variables: `PUBLIC_URL`, `MP3_QUALITY` (`V2` default, or `ABR192`, `CBR192`, `V0`), `CACHE_TTL_HOURS`,
-`API_KEY` (if set, add an `X-API-Key` header to the three HTTP nodes), `YTDLP_COOKIES`, `PLAYLIST_LIMIT`.
+`API_KEY` (if set, add an `X-API-Key` header to the three HTTP nodes), `YTDLP_COOKIES`, `PLAYLIST_LIMIT`, `MAX_JOBS`, `YT_PLAYER_CLIENTS`, `POT_PROVIDER_URL`.
 
 > **About "192 kbps VBR"**: LAME `-V2` is the standard preset for that. It averages about 190 kbps on real music,
 > goes lower on quiet or simple passages, and goes higher on dense ones. If every file must average close to

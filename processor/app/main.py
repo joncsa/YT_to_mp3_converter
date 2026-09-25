@@ -201,7 +201,7 @@ def analyze(req: AnalyzeRequest) -> dict:
     else:
         artist, title, name_source = naming.derive_names(info, content_type)
 
-    item_id = media.safe_id(info)
+    item_id = info.get("item_id") or media.safe_id(info)
     return {
         "ok": True,
         "id": item_id,
